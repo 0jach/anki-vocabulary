@@ -1,0 +1,7 @@
+// Merge the binding into your existing binds block. Replace YOUR_USER and project path.
+// niri spawn does not expand ~ or shell variables.
+binds {
+    Mod+Shift+A hotkey-overlay-title="Capture English vocabulary" {
+        spawn "/home/YOUR_USER/Github/anki-vocabulary/.venv/bin/python" "/home/YOUR_USER/Github/anki-vocabulary/capture.py";
+    }
+}

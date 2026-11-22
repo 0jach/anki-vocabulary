@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "python_path": "/home/YOUR_USER/Github/anki-vocabulary/.venv/bin/python",
+  "project_path": "/home/YOUR_USER/Github/anki-vocabulary",
+  "config_path": "/home/YOUR_USER/.config/anki-vocabulary/config.env",
+  "profile": ""
+}

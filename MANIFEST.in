@@ -1,0 +1,4 @@
+include .env.example uv.lock
+recursive-include anki_addon *.py *.json *.md
+recursive-include examples *.kdl
+recursive-include tests *.py

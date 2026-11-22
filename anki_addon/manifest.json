@@ -1,0 +1,7 @@
+{
+  "package": "anki_vocabulary_startup",
+  "name": "Local Vocabulary Queue",
+  "author": "anki-vocabulary",
+  "homepage": "https://github.com/0jach/anki-vocabulary",
+  "conflicts": []
+}
