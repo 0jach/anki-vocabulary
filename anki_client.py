@@ -47,11 +47,11 @@ class AnkiClient:
         self.config = config
         self.existing: dict[str, int] = {}
 
-    def call(self, action: str, **params: Any) -> Any:
+    def call(self, action: str, *, _timeout: float = 10, **params: Any) -> Any:
         payload = {"action": action, "version": 6, "params": params}
         if self.config.anki_api_key:
             payload["key"] = self.config.anki_api_key
-        response = request_json(self.config.anki_url, payload, timeout=10)
+        response = request_json(self.config.anki_url, payload, timeout=_timeout)
         if "result" not in response or "error" not in response:
             raise ServiceError("Malformed AnkiConnect response")
         if response["error"] is not None:

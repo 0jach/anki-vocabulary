@@ -240,3 +240,52 @@ def test_finite_snapshot_and_bounded_batches(config, db, services):
     assert run(config) == 0
     assert [row["status"] for row in db.inspect()] == ["imported", "imported", "pending"]
     assert generate.call_count == 2
+
+
+def test_capture_worker_exits_if_anki_closed(config, db, services):
+    client, session, generate = services
+    db.enqueue("Recondite", "recondite")
+    client.call.side_effect = ServiceError("connection refused")
+    assert run(config, if_anki_open=True) == 0
+    client.prepare.assert_not_called()
+    generate.assert_not_called()
+    session.__enter__.assert_not_called()
+    assert db.inspect()[0]["status"] == "pending"
+    assert db.inspect()[0]["attempt_count"] == 0
+
+
+def test_capture_worker_processes_if_anki_open(config, db, services):
+    client, _, generate = services
+    db.enqueue("Recondite", "recondite")
+    assert run(config, if_anki_open=True) == 0
+    client.call.assert_called_once_with("version", _timeout=0.5)
+    assert db.inspect()[0]["status"] == "imported"
+    generate.assert_called_once()
+
+
+def test_capture_during_active_worker_is_processed_after_it(config, db, services, card):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, _, generate = services
+    client.import_card.side_effect = [123, 124]
+    db.enqueue("Recondite", "recondite")
+    followup = None
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        def output(session, jobs, grounding):
+            nonlocal followup
+            if jobs[0].normalized_word == "recondite":
+                db.enqueue("obscure", "obscure")
+                followup = executor.submit(run, config, if_anki_open=True)
+            return [
+                card.model_copy(update={"job_id": job.id, "headword": job.word}) for job in jobs
+            ]
+
+        generate.side_effect = output
+        assert run(config) == 0
+        assert followup.result(timeout=5) == 0
+
+    assert [row["status"] for row in db.inspect()] == ["imported", "imported"]
+    assert [row["anki_note_id"] for row in db.inspect()] == [123, 124]
+    assert generate.call_count == 2

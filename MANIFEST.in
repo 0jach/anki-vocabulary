@@ -1,4 +1,4 @@
-include .env.example uv.lock
+include .env.example uv.lock setup.sh setup_app.py
 recursive-include anki_addon *.py *.json *.md
 recursive-include examples *.kdl
 recursive-include tests *.py

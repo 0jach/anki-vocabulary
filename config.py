@@ -35,6 +35,7 @@ class Config(BaseModel):
     anki_profile: str = ""  # Set this when using multiple profiles.
     anki_wait_timeout: float = Field(default=30, ge=0, le=300)
     max_attempts: int = Field(default=3, ge=1, le=100)
+    process_when_anki_open: bool = True
     wordnet: bool = False
 
     @field_validator("db_path")

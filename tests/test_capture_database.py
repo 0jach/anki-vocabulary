@@ -96,11 +96,49 @@ def test_capture_command(config, db, monkeypatch):
     monkeypatch.setattr(capture, "load_config", lambda _: config)
     notification = Mock()
     monkeypatch.setattr(capture, "notify", notification)
+    launch = Mock()
+    monkeypatch.setattr(capture, "launch_worker", launch)
     assert capture.main() == 0
     assert capture.main() == 0
     assert len(db.inspect()) == 1
     assert db.inspect()[0]["context"] == "A theory"
     assert "Already captured" in notification.call_args.args[0]
+    launch.assert_called_once_with(None)
+
+
+def test_capture_can_disable_immediate_processing(config, db, monkeypatch):
+    config.process_when_anki_open = False
+    monkeypatch.setattr(sys, "argv", ["capture.py", "--text", "word"])
+    monkeypatch.setattr(capture, "load_config", lambda _: config)
+    monkeypatch.setattr(capture, "notify", Mock())
+    launch = Mock()
+    monkeypatch.setattr(capture, "launch_worker", launch)
+    assert capture.main() == 0
+    assert db.inspect()[0]["status"] == "pending"
+    launch.assert_not_called()
+
+
+def test_worker_launch_detached_with_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    spawn = Mock()
+    monkeypatch.setattr(capture.subprocess, "Popen", spawn)
+    config_file = tmp_path / "config.env"
+    capture.launch_worker(str(config_file))
+    command = spawn.call_args.args[0]
+    assert "--if-anki-open" in command
+    assert command[-2:] == ["--config", str(config_file)]
+    assert spawn.call_args.kwargs["start_new_session"] is True
+    spawn.return_value.wait.assert_not_called()
+
+
+def test_launch_failure_preserves_capture(config, db, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["capture.py", "--text", "word"])
+    monkeypatch.setattr(capture, "load_config", lambda _: config)
+    monkeypatch.setattr(capture, "notify", Mock())
+    monkeypatch.setattr(capture.subprocess, "Popen", Mock(side_effect=OSError("cannot spawn")))
+    assert capture.main() == 0
+    assert db.inspect()[0]["status"] == "pending"
 
 
 def test_migration_idempotent_and_parameters(db):

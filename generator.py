@@ -42,8 +42,9 @@ class CardBatch(BaseModel):
 
 
 class OllamaSession:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *, require_model: bool = True):
         self.config = config
+        self.require_model = require_model
         self.url = config.ollama_url
         self.process: subprocess.Popen | None = None
         self.log = None
@@ -68,9 +69,9 @@ class OllamaSession:
             installed = next(
                 (item for item in models if item.get("name") in {model, canonical}), None
             )
-            if installed is None:
+            if installed is None and self.require_model:
                 raise ServiceError(f"Model {model!r} is not installed; pull it manually first")
-            if installed.get("remote_host") or installed.get("remote_model"):
+            if installed and (installed.get("remote_host") or installed.get("remote_model")):
                 raise ServiceError("Remote/cloud Ollama models are not allowed")
             return self
         except BaseException:

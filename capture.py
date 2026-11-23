@@ -2,10 +2,13 @@
 
 import argparse
 import logging
+import os
 import re
 import sqlite3
 import subprocess
+import sys
 import unicodedata
+from pathlib import Path
 
 from config import load_config
 from database import Database
@@ -76,9 +79,32 @@ def notify(message: str, *, error: bool = False) -> None:
         logger.warning("notification_unavailable")
 
 
+def launch_worker(config_path: str | None) -> None:
+    """Hand off without waiting for Anki, the worker lock, or local inference."""
+    command = [sys.executable, str(Path(__file__).with_name("worker.py")), "--if-anki-open"]
+    if config_path:
+        command.extend(["--config", str(Path(config_path).expanduser().resolve())])
+    log_dir = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+    log_dir = log_dir / "anki-vocabulary"
+    try:
+        log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(log_dir / "worker.log", os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "ab") as log:
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+    except OSError as exc:
+        # Capture already committed. Startup processing remains available.
+        logger.warning("worker_launch_failed", extra={"details": {"error": str(exc)}})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Queue a selected English word for the next Anki start"
+        description="Capture vocabulary and process it when Anki is available"
     )
     parser.add_argument("--config")
     parser.add_argument("--text", help="Explicit text instead of reading the Wayland clipboard")
@@ -94,6 +120,8 @@ def main() -> int:
             raise ValueError("Context must be at most 2000 characters")
         with Database(config.db_path) as db:
             inserted = db.enqueue(word, normalized, args.context)
+        if inserted and config.process_when_anki_open:
+            launch_worker(args.config)
         notify(f"Queued: {word}" if inserted else f"Already captured: {word}")
         logger.info("capture_saved" if inserted else "capture_duplicate")
         return 0

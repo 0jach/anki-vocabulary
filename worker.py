@@ -1,4 +1,4 @@
-"""One finite queue snapshot per Anki startup; no daemon or polling service."""
+"""Finite queue processing on startup or capture; no daemon or polling service."""
 
 import argparse
 import fcntl
@@ -14,6 +14,7 @@ from config import Config, load_config
 from database import Database, Job
 from generator import OllamaSession, generate_cards
 from grounding import WordNetGrounding
+from http_client import ServiceError
 from log_utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,13 @@ class WorkerBusy(RuntimeError):
 
 
 @contextmanager
-def worker_lock(config: Config) -> Iterator[None]:
+def worker_lock(config: Config, *, wait: bool = False) -> Iterator[None]:
     config.db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     # Never unlink the lock: replacing its inode would let another worker bypass flock.
     fd = os.open(str(config.db_path) + ".worker.lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError as exc:
             raise WorkerBusy("Another worker owns this queue") from exc
         yield
@@ -84,8 +85,10 @@ def process_batch(
     return failed
 
 
-def run(config: Config) -> int:
-    with worker_lock(config), Database(config.db_path) as db:
+def run(config: Config, *, if_anki_open: bool = False) -> int:
+    # Capture-triggered processes wait behind the active batch, then take their own
+    # snapshot. A capture arriving during processing cannot miss the worker's exit.
+    with worker_lock(config, wait=if_anki_open), Database(config.db_path) as db:
         recovered = db.recover()
         if recovered:
             logger.warning("interrupted_jobs_recovered", extra={"details": {"count": recovered}})
@@ -93,7 +96,15 @@ def run(config: Config) -> int:
         if not ids and not (config.anki_sync and db.sync_pending()):
             logger.info("queue_empty")
             return 0
-        anki = AnkiClient(config)
+        anki = AnkiClient(
+            config.model_copy(update={"anki_wait_timeout": 0.0}) if if_anki_open else config
+        )
+        if if_anki_open:
+            try:
+                anki.call("version", _timeout=0.5)
+            except ServiceError:
+                logger.info("anki_unavailable_queue_preserved")
+                return 0
         # A failed readiness check consumes no attempts and never starts Ollama.
         anki.prepare()
         failed = False
@@ -130,13 +141,18 @@ def interrupted(signum: int, _frame: object) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate and import the current vocabulary queue")
     parser.add_argument("--config")
+    parser.add_argument(
+        "--if-anki-open",
+        action="store_true",
+        help="Exit quietly if AnkiConnect is unavailable; wait behind an existing worker",
+    )
     args = parser.parse_args()
     os.umask(0o077)
     setup_logging()
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     try:
-        return run(load_config(args.config))
+        return run(load_config(args.config), if_anki_open=args.if_anki_open)
     except WorkerBusy:
         logger.info("worker_already_running")
         return 0
